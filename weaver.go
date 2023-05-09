@@ -1,82 +1,87 @@
 package weaver
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/antchfx/htmlquery"
+	"golang.org/x/time/rate"
 )
 
 var visited = map[string]bool{}
 
-// var debug = io.Discard
+var limiter = rate.NewLimiter(5, 1)
 
-var debug = os.Stderr
-
-var base *url.URL
+var (
+	base    *url.URL
+	verbose *bool
+)
 
 func Main() int {
-	tmp, err := url.Parse(os.Args[1])
+	verbose = flag.Bool("v", false, "verbose output")
+	flag.Parse()
+	tmp, err := url.Parse(flag.Args()[0])
 	base = tmp
 	if err != nil {
 		log.Fatal(err)
 	}
-	Crawl(os.Args[1])
+	ctx := context.Background()
+	Crawl(ctx, base.String(), "none")
 	return 0
 }
 
-func Crawl(link string) {
-	resp, err := http.Get(link)
+func Crawl(ctx context.Context, page, referrer string) {
+	limiter.Wait(ctx)
+	resp, err := http.Get(page)
 	if err != nil {
-		fmt.Println(link, err)
+		fmt.Printf("[%s] %s (referrer %s)\n", err, page, referrer)
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		fmt.Println(link, resp.Status)
+		fmt.Printf("[%s] %s (referrer: %s)\n", resp.Status, page, referrer)
 		return
 	}
-	fmt.Fprintln(debug, link, resp.Status)
+	if *verbose {
+		fmt.Printf("[%s] %s (referrer: %s)\n", resp.Status, page, referrer)
+	}
 	defer resp.Body.Close()
-	if isOffsite(link, os.Args[1]) {
-		fmt.Fprintln(debug, link, "offsite")
+	if isOffsite(page) {
 		return
 	}
 	doc, err := htmlquery.Parse(resp.Body)
 	if err != nil {
-		fmt.Fprintln(debug, link, err)
+		fmt.Printf("[%s] %s (referrer: %s)\n", err, page, referrer)
 	}
 	list := htmlquery.Find(doc, "//a/@href")
 	for _, n := range list {
 		link := htmlquery.SelectAttr(n, "href")
 		u, err := url.Parse(link)
 		if err != nil {
-			fmt.Fprintln(debug, link, err)
+			fmt.Printf("[%s] %s (referrer: %s)\n", err, link, referrer)
 			return
 		}
 		link = base.ResolveReference(u).String()
 		if !visited[link] {
-			fmt.Fprintln(debug, link, "crawling...")
-			time.Sleep(time.Second)
 			visited[link] = true
-			Crawl(link)
-		} else {
-			fmt.Fprintln(debug, link, "skipping")
+			Crawl(ctx, link, page)
+		} else if *verbose {
+			fmt.Printf("[skip] %s (referrer: %s)\n", link, referrer)
 		}
 	}
 }
 
-func isOffsite(link, start string) bool {
-	return !strings.HasPrefix(link, start)
+func isOffsite(link string) bool {
+	return !strings.HasPrefix(link, base.String())
 }
 
 func canonicalize(link string) string {
 	if !strings.HasPrefix(link, "http") {
-		return os.Args[1] + link
+		return base.String() + "/" + link
 	}
 	return link
 }

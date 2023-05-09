@@ -2,7 +2,10 @@ module github.com/bitfield/weaver
 
 go 1.19
 
-require github.com/antchfx/htmlquery v1.3.0
+require (
+	github.com/antchfx/htmlquery v1.3.0
+	golang.org/x/time v0.3.0
+)
 
 require (
 	github.com/antchfx/xpath v1.2.3 // indirect
