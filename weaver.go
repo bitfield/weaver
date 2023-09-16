@@ -9,10 +9,12 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/antchfx/htmlquery"
+	"github.com/fatih/color"
 	"golang.org/x/time/rate"
 )
 
@@ -36,14 +38,14 @@ func Crawl(ctx context.Context, page, referrer string) {
 	limiter.Wait(ctx)
 	resp, err := httpClient.Get(page)
 	if err != nil {
-		fmt.Printf("[%s] %s (referrer %s)\n", err, page, referrer)
-		broken = append(broken, fmt.Sprintf("[%s] %s (referrer %s)\n", err, page, referrer))
+		msg := fmt.Sprintf("[%s] %s: %s (referrer %s)\n", color.RedString("ERR"), page, err, referrer)
+		broken = append(broken, msg)
 		return
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		limiter.SetLimit(limiter.Limit() / 2)
 		if *verbose {
-			fmt.Printf("[%s] %s, reducing rate limit to %.2fr/s\n", resp.Status, page, limiter.Limit())
+			fmt.Printf("[%s] %s, reducing rate limit to %.2fr/s\n", color.RedString("LMT"), page, limiter.Limit())
 		}
 		lastRateLimit = time.Now()
 		Crawl(ctx, page, referrer)
@@ -58,21 +60,28 @@ func Crawl(ctx context.Context, page, referrer string) {
 		limiter.SetLimit(curLimit)
 		lastRateLimit = time.Now()
 		if *verbose {
-			fmt.Printf("increasing rate limit to %.2fr/s\n", curLimit)
+			fmt.Printf("[%s] increasing rate limit to %.2fr/s\n", color.GreenString("LMT"), curLimit)
 		}
 	}
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("[%s] %s (referrer: %s)\n", resp.Status, page, referrer)
+		msg := fmt.Sprintf("[%s] %s (referrer: %s)\n",
+			color.RedString(strconv.Itoa(resp.StatusCode)),
+			page, referrer,
+		)
+		fmt.Print(msg)
 		if resp.StatusCode == http.StatusNotFound {
-			broken = append(broken, fmt.Sprintf("[%s] %s (referrer: %s)\n", resp.Status, page, referrer))
+			broken = append(broken, msg)
 		} else {
-			warning = append(warning, fmt.Sprintf("[%s] %s (referrer: %s)\n", resp.Status, page, referrer))
+			warning = append(warning, msg)
 		}
 		return
 	}
 	success++
 	if *verbose {
-		fmt.Printf("[%s] %s (referrer: %s)\n", resp.Status, page, referrer)
+		fmt.Printf("[%s] %s (referrer: %s)\n",
+			color.GreenString(strconv.Itoa(resp.StatusCode)),
+			page, referrer,
+		)
 	}
 	defer resp.Body.Close()
 	if !strings.HasPrefix(page, base.String()) {
@@ -80,15 +89,16 @@ func Crawl(ctx context.Context, page, referrer string) {
 	}
 	doc, err := htmlquery.Parse(resp.Body)
 	if err != nil {
-		fmt.Printf("[%s] %s (referrer: %s)\n", err, page, referrer)
+		fmt.Printf("[%s] %s: %s (referrer: %s)\n", color.RedString("ERR"), page, err, referrer)
 	}
 	list := htmlquery.Find(doc, "//a/@href")
 	for _, n := range list {
 		link := htmlquery.SelectAttr(n, "href")
 		u, err := url.Parse(link)
 		if err != nil {
-			fmt.Printf("[%s] %s (referrer: %s)\n", err, link, referrer)
-			broken = append(broken, fmt.Sprintf("[%s] %s (referrer: %s)\n", err, link, referrer))
+			msg := fmt.Sprintf("[%s] %s (referrer: %s)\n", color.RedString("ERR"), page, referrer)
+			fmt.Print(msg)
+			broken = append(broken, msg)
 			return
 		}
 		link = base.ResolveReference(u).String()
@@ -116,15 +126,14 @@ func Main() int {
 	<-ctx.Done()
 	if len(broken) > 0 {
 		fmt.Println("\nBroken links:")
-		fmt.Println(strings.Join(broken, ""))
+		fmt.Print(strings.Join(broken, ""))
 	}
-	fmt.Printf("\nTime: %s Visited: %d Links: %d OK: %d Broken: %d Warning: %d\n",
-		time.Since(start).Round(time.Second),
-		len(visited),
-		success+len(broken)+len(warning),
+	fmt.Printf("\nLinks: %d (%d OK, %d broken, %d warnings) [%s]\n",
+		len(visited)+1,
 		success,
 		len(broken),
 		len(warning),
+		time.Since(start).Round(100*time.Millisecond),
 	)
 	return 0
 }

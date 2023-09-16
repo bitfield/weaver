@@ -13,13 +13,47 @@
 
 Here's how to install it:
 
-```
+```sh
 go install github.com/bitfield/weaver/cmd/weaver@latest
 ```
 
 To run it:
 
-```
+```sh
 weaver https://example.com
 ```
+```
+Links: 2 (2 OK, 0 broken, 0 warnings) [1s]
+```
 
+## Verbose mode
+
+To see more information about what's going on, use the `-v` flag:
+
+```sh
+weaver -v https://example.com
+```
+```
+[200] https://example.com (referrer: CLI)
+[200] https://www.iana.org/domains/example (referrer: https://example.com)
+
+Links: 2 (2 OK, 0 broken, 0 warnings) [900ms]
+```
+
+## How it works
+
+The program checks the status of the specified URL. If the server responds with an HTML page, the program will parse this page for links, and check each new link for its status.
+
+If the link points to the same domain as the original URL, it is also parsed for further links, and so on recursively until all links on the site have been visited.
+
+Any broken links will be reported, together with the referring page:
+
+```
+[404] https://example.com/bogus (referrer: https://example.com)
+```
+
+## Rate limiting
+
+The program attempts to continuously adapt its request rate to suit the server. On receiving a `429 Too Many Requests` response, it will reduce the current request rate. After a while with no further 429 responses, it will steadily increase the rate until it trips the rate limit once again.
+
+Even without receiving any 429 responses, the program limits itself to a maximum of 5 requests per second, to be respectful of server resources.
