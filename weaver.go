@@ -109,7 +109,10 @@ func Main() int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	go Crawl(ctx, base.String(), "CLI")
+	go func() {
+		Crawl(ctx, base.String(), "CLI")
+		cancel()
+	}()
 	<-ctx.Done()
 	if len(broken) > 0 {
 		fmt.Println("\nBroken links:")
