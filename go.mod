@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/antchfx/htmlquery v1.3.0
 	github.com/fatih/color v1.15.0
+	github.com/google/go-cmp v0.6.0
 	golang.org/x/time v0.3.0
 )
 
