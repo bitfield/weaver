@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +22,7 @@ const maxRate = 5
 var (
 	start         = time.Now()
 	visited       = map[string]bool{}
-	warning       []string
+	warning       []Result
 	success       int
 	limiter       = rate.NewLimiter(maxRate, 1)
 	lastRateLimit time.Time
@@ -32,9 +31,9 @@ var (
 type Checker struct {
 	Verbose    bool
 	Output     io.Writer
-	Base       *url.URL
+	BaseURL    *url.URL
 	HTTPClient *http.Client
-	broken     []string
+	results    []Result
 }
 
 func NewChecker() *Checker {
@@ -50,11 +49,19 @@ func NewChecker() *Checker {
 func (c *Checker) Check(ctx context.Context, page string) {
 	base, err := url.Parse(page)
 	if err != nil {
-		msg := fmt.Sprintf("[%s] %s: %s (referrer %s)\n", color.RedString("ERR"), page, err, "START")
-		c.broken = append(c.broken, msg)
+		c.Record(Result{
+			Status:   StatusError,
+			Message:  err.Error(),
+			Link:     page,
+			Referrer: "START",
+		})
 		return
 	}
-	c.Base = base
+	c.BaseURL = base
+	if !strings.HasSuffix(page, "/") {
+		page += "/"
+	}
+	visited[page] = true
 	c.Crawl(ctx, page, "START")
 }
 
@@ -62,15 +69,19 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	limiter.Wait(ctx)
 	resp, err := c.HTTPClient.Get(page)
 	if err != nil {
-		msg := fmt.Sprintf("[%s] %s: %s (referrer %s)\n", color.RedString("ERR"), page, err, referrer)
-		c.broken = append(c.broken, msg)
+		c.Record(Result{
+			Status:   StatusError,
+			Message:  err.Error(),
+			Link:     page,
+			Referrer: referrer,
+		})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		limiter.SetLimit(limiter.Limit() / 2)
 		if c.Verbose {
-			fmt.Fprintf(c.Output, "[%s] %s, reducing rate limit to %.2fr/s\n", color.RedString("LMT"), page, limiter.Limit())
+			fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", limiter.Limit())
 		}
 		lastRateLimit = time.Now()
 		c.Crawl(ctx, page, referrer)
@@ -85,30 +96,25 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		limiter.SetLimit(curLimit)
 		lastRateLimit = time.Now()
 		if c.Verbose {
-			fmt.Fprintf(c.Output, "[%s] increasing rate limit to %.2fr/s\n", color.GreenString("LMT"), curLimit)
+			fmt.Fprintf(c.Output, "[INFO] increasing rate limit to %.2fr/s\n", curLimit)
 		}
 	}
-	if resp.StatusCode != http.StatusOK {
-		msg := fmt.Sprintf("[%s] %s (referrer: %s)\n",
-			color.RedString(strconv.Itoa(resp.StatusCode)),
-			page, referrer,
-		)
-		fmt.Fprint(c.Output, msg)
-		if resp.StatusCode == http.StatusNotFound {
-			c.broken = append(c.broken, msg)
-		} else {
-			warning = append(warning, msg)
-		}
-		return
+	result := Result{
+		Message:  resp.Status,
+		Link:     page,
+		Referrer: referrer,
 	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		result.Status = StatusOK
+	case http.StatusNotFound:
+		result.Status = StatusError
+	default:
+		result.Status = StatusWarning
+	}
+	c.Record(result)
 	success++
-	if c.Verbose {
-		fmt.Fprintf(c.Output, "[%s] %s (referrer: %s)\n",
-			color.GreenString(strconv.Itoa(resp.StatusCode)),
-			page, referrer,
-		)
-	}
-	if !strings.HasPrefix(page, c.Base.String()) {
+	if !strings.HasPrefix(page, c.BaseURL.String()) {
 		return // skip parsing offsite pages
 	}
 	doc, err := htmlquery.Parse(resp.Body)
@@ -120,12 +126,15 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		link := htmlquery.SelectAttr(n, "href")
 		u, err := url.Parse(link)
 		if err != nil {
-			msg := fmt.Sprintf("[%s] %s (referrer: %s)\n", color.RedString("ERR"), page, referrer)
-			fmt.Fprint(c.Output, msg)
-			c.broken = append(c.broken, msg)
+			c.Record(Result{
+				Status:   StatusError,
+				Message:  err.Error(),
+				Link:     link,
+				Referrer: page,
+			})
 			return
 		}
-		link = c.Base.ResolveReference(u).String()
+		link = c.BaseURL.ResolveReference(u).String()
 		if !visited[link] {
 			visited[link] = true
 			c.Crawl(ctx, link, page)
@@ -133,11 +142,64 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	}
 }
 
-func (c *Checker) Broken() []string {
-	return c.broken
+func (c *Checker) Record(r Result) {
+	if r.Status != StatusOK || c.Verbose {
+		fmt.Fprintln(c.Output, r)
+	}
+	c.results = append(c.results, r)
 }
 
-type Result struct{}
+func (c *Checker) Results() []Result {
+	return c.results
+}
+
+func (c *Checker) BrokenLinks() []Result {
+	var broken []Result
+	for _, r := range c.results {
+		if r.Status != StatusOK {
+			broken = append(broken, r)
+		}
+	}
+	return broken
+}
+
+type Result struct {
+	Link     string
+	Status   Status
+	Message  string
+	Referrer string
+}
+
+func (r Result) String() string {
+	return fmt.Sprintf("[%s] (%s) %s (referrer: %s)",
+		r.Status,
+		r.Message,
+		r.Link,
+		r.Referrer,
+	)
+}
+
+type Status string
+
+func (s Status) String() string {
+	msg := string(s)
+	switch s {
+	case StatusOK:
+		return color.GreenString(msg)
+	case StatusWarning:
+		return color.YellowString(msg)
+	case StatusError:
+		return color.RedString(msg)
+	default:
+		return msg
+	}
+}
+
+const (
+	StatusOK      Status = "OKAY"
+	StatusWarning Status = "WARN"
+	StatusError   Status = "DEAD"
+)
 
 func Main() int {
 	verbose := flag.Bool("v", false, "verbose output")
@@ -152,10 +214,12 @@ func Main() int {
 		cancel()
 	}()
 	<-ctx.Done()
-	broken := c.Broken()
+	broken := c.BrokenLinks()
 	if len(broken) > 0 {
 		fmt.Println("\nBroken links:")
-		fmt.Print(strings.Join(broken, ""))
+		for _, link := range broken {
+			fmt.Println(link)
+		}
 	}
 	fmt.Printf("\nLinks: %d (%d OK, %d broken, %d warnings) [%s]\n",
 		len(visited)+1,

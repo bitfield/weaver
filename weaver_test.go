@@ -21,12 +21,35 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	c.HTTPClient = ts.Client()
 	c.Output = io.Discard
 	c.Check(context.Background(), ts.URL)
-	want := []string{
-		fmt.Sprintf("[\x1b[31m404\x1b[0m] %s/bogus (referrer: %[1]s/go_sucks.html)\n", ts.URL),
-		fmt.Sprintf("[\x1b[31m404\x1b[0m] %s/rust_rules.html (referrer: %[1]s/)\n", ts.URL),
+	want := []weaver.Result{
+		{
+			Link:     ts.URL + "/",
+			Status:   weaver.StatusOK,
+			Message:  "200 OK",
+			Referrer: "START",
+		},
+		{
+			Link:     ts.URL + "/go_sucks.html",
+			Status:   weaver.StatusOK,
+			Message:  "200 OK",
+			Referrer: ts.URL + "/",
+		},
+		{
+			Link:     ts.URL + "/bogus",
+			Status:   weaver.StatusError,
+			Message:  "404 Not Found",
+			Referrer: ts.URL + "/go_sucks.html",
+		},
+		{
+			Link:     ts.URL + "/rust_rules.html",
+			Status:   weaver.StatusError,
+			Message:  "404 Not Found",
+			Referrer: ts.URL + "/",
+		},
 	}
-	got := c.Broken()
+	got := c.Results()
 	if !cmp.Equal(want, got) {
+		fmt.Println(got)
 		t.Error(cmp.Diff(want, got))
 	}
 }
