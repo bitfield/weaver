@@ -10,6 +10,7 @@ import (
 
 	"github.com/bitfield/weaver"
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/time/rate"
 )
 
 func TestCrawlReturnsExpectedResults(t *testing.T) {
@@ -51,5 +52,17 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	if !cmp.Equal(want, got) {
 		fmt.Println(got)
 		t.Error(cmp.Diff(want, got))
+	}
+}
+
+func TestReduceRateLimit_SetsCorrectLimit(t *testing.T) {
+	t.Parallel()
+	c := weaver.NewChecker()
+	c.SetRateLimit(4)
+	c.ReduceRateLimit()
+	want := rate.Limit(2)
+	got := c.RateLimit()
+	if want != got {
+		t.Errorf("want %.2f, got %.2f", want, got)
 	}
 }

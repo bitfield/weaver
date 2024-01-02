@@ -17,15 +17,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const maxRate = 5
+const maxRate rate.Limit = 5
 
 var (
-	start         = time.Now()
-	visited       = map[string]bool{}
-	warning       []Result
-	success       int
-	limiter       = rate.NewLimiter(maxRate, 1)
-	lastRateLimit time.Time
+	start            = time.Now()
+	visited          = map[string]bool{}
+	warning          []Result
+	success          int
+	lastRateLimitSet time.Time
 )
 
 type Checker struct {
@@ -34,6 +33,7 @@ type Checker struct {
 	BaseURL    *url.URL
 	HTTPClient *http.Client
 	results    []Result
+	limiter    *rate.Limiter
 }
 
 func NewChecker() *Checker {
@@ -43,6 +43,7 @@ func NewChecker() *Checker {
 		HTTPClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+		limiter: rate.NewLimiter(maxRate, 1),
 	}
 }
 
@@ -66,7 +67,7 @@ func (c *Checker) Check(ctx context.Context, page string) {
 }
 
 func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
-	limiter.Wait(ctx)
+	c.limiter.Wait(ctx)
 	resp, err := c.HTTPClient.Get(page)
 	if err != nil {
 		c.Record(Result{
@@ -79,22 +80,19 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		limiter.SetLimit(limiter.Limit() / 2)
-		if c.Verbose {
-			fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", limiter.Limit())
-		}
-		lastRateLimit = time.Now()
+		c.ReduceRateLimit()
+		lastRateLimitSet = time.Now()
 		c.Crawl(ctx, page, referrer)
 		return
 	}
-	curLimit := limiter.Limit()
-	if curLimit < maxRate && time.Since(lastRateLimit) > 10*time.Second {
+	curLimit := c.limiter.Limit()
+	if curLimit < maxRate && time.Since(lastRateLimitSet) > 10*time.Second {
 		curLimit *= 1.5
 		if curLimit > maxRate {
 			curLimit = maxRate
 		}
-		limiter.SetLimit(curLimit)
-		lastRateLimit = time.Now()
+		c.limiter.SetLimit(curLimit)
+		lastRateLimitSet = time.Now()
 		if c.Verbose {
 			fmt.Fprintf(c.Output, "[INFO] increasing rate limit to %.2fr/s\n", curLimit)
 		}
@@ -122,8 +120,8 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		fmt.Fprintf(c.Output, "[%s] %s: %s (referrer: %s)\n", color.RedString("ERR"), page, err, referrer)
 	}
 	list := htmlquery.Find(doc, "//a/@href")
-	for _, n := range list {
-		link := htmlquery.SelectAttr(n, "href")
+	for _, anchor := range list {
+		link := htmlquery.SelectAttr(anchor, "href")
 		u, err := url.Parse(link)
 		if err != nil {
 			c.Record(Result{
@@ -161,6 +159,22 @@ func (c *Checker) BrokenLinks() []Result {
 		}
 	}
 	return broken
+}
+
+func (c *Checker) SetRateLimit(limit rate.Limit) {
+	c.limiter.SetLimit(limit)
+}
+
+func (c *Checker) RateLimit() rate.Limit {
+	return c.limiter.Limit()
+}
+
+func (c *Checker) ReduceRateLimit() {
+	curLimit := c.RateLimit()
+	c.SetRateLimit(curLimit / 2)
+	if c.Verbose {
+		fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", c.limiter.Limit())
+	}
 }
 
 type Result struct {
