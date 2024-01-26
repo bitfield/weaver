@@ -22,21 +22,20 @@ const maxRate rate.Limit = 5
 
 var (
 	start            = time.Now()
-	warning          []Result
 	success          int
 	lastRateLimitSet time.Time
 )
 
 type Checker struct {
+	mu         sync.Mutex
 	Verbose    bool
 	Output     io.Writer
 	BaseURL    *url.URL
 	HTTPClient *http.Client
 	results    []Result
+	warning    []Result
 	limiter    *rate.Limiter
-
-	mu      sync.Mutex
-	visited map[string]bool
+	visited    map[string]bool
 }
 
 func NewChecker() *Checker {
@@ -151,14 +150,20 @@ func (c *Checker) Record(r Result) {
 	if r.Status != StatusOK || c.Verbose {
 		fmt.Fprintln(c.Output, r)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.results = append(c.results, r)
 }
 
 func (c *Checker) Results() []Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.results
 }
 
 func (c *Checker) BrokenLinks() []Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var broken []Result
 	for _, r := range c.results {
 		if r.Status != StatusOK {
@@ -246,7 +251,7 @@ func Main() int {
 		len(c.visited)+1,
 		success,
 		len(broken),
-		len(warning),
+		len(c.warning),
 		time.Since(start).Round(100*time.Millisecond),
 	)
 	return 0
