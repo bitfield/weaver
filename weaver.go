@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/antchfx/htmlquery"
@@ -22,7 +23,6 @@ const maxRate rate.Limit = 5
 
 var (
 	start            = time.Now()
-	success          int
 	lastRateLimitSet time.Time
 )
 
@@ -34,6 +34,7 @@ type Checker struct {
 	HTTPClient *http.Client
 	results    []Result
 	warning    []Result
+	succes     atomic.Uint64
 	limiter    *rate.Limiter
 	visited    map[string]bool
 }
@@ -116,7 +117,7 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		result.Status = StatusWarning
 	}
 	c.Record(result)
-	success++
+	c.succes.Add(1)
 	if !strings.HasPrefix(page, c.BaseURL.String()) {
 		return // skip parsing offsite pages
 	}
@@ -249,7 +250,7 @@ func Main() int {
 	}
 	fmt.Printf("\nLinks: %d (%d OK, %d broken, %d warnings) [%s]\n",
 		len(c.visited)+1,
-		success,
+		c.succes.Load(),
 		len(broken),
 		len(c.warning),
 		time.Since(start).Round(100*time.Millisecond),
