@@ -13,7 +13,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func TestCrawlDetectsInvalidLink(t *testing.T) {
+func TestCrawlDetectsInvalidLinks(t *testing.T) {
 	t.Parallel()
 
 	ts := httptest.NewTLSServer(
@@ -34,9 +34,15 @@ func TestCrawlDetectsInvalidLink(t *testing.T) {
 			Referrer: "START",
 		},
 		{
-			Link:     "httq://invalid_link.html",
+			Link:     "httq://invalid_scheme.html",
 			Status:   weaver.StatusError,
-			Message:  `Get "httq:/invalid_link.html": unsupported protocol scheme "httq"`,
+			Message:  `Get "httq://invalid_scheme.html": unsupported protocol scheme "httq"`,
+			Referrer: ts.URL + "/invalid_link.html/",
+		},
+		{
+			Link:     "http:// /",
+			Status:   weaver.StatusError,
+			Message:  `parse "http:// /": invalid character " " in host name`,
 			Referrer: ts.URL + "/invalid_link.html/",
 		},
 	}
