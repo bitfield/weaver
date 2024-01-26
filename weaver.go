@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/antchfx/htmlquery"
@@ -21,19 +23,20 @@ const maxRate rate.Limit = 5
 
 var (
 	start            = time.Now()
-	visited          = map[string]bool{}
-	warning          []Result
-	success          int
 	lastRateLimitSet time.Time
 )
 
 type Checker struct {
+	mu         sync.Mutex
 	Verbose    bool
 	Output     io.Writer
 	BaseURL    *url.URL
 	HTTPClient *http.Client
 	results    []Result
+	warning    []Result
+	succes     atomic.Uint64
 	limiter    *rate.Limiter
+	visited    map[string]bool
 }
 
 func NewChecker() *Checker {
@@ -44,6 +47,7 @@ func NewChecker() *Checker {
 			Timeout: 5 * time.Second,
 		},
 		limiter: rate.NewLimiter(maxRate, 1),
+		visited: make(map[string]bool),
 	}
 }
 
@@ -62,7 +66,9 @@ func (c *Checker) Check(ctx context.Context, page string) {
 	if !strings.HasSuffix(page, "/") {
 		page += "/"
 	}
-	visited[page] = true
+	c.mu.Lock()
+	c.visited[page] = true
+	c.mu.Unlock()
 	c.Crawl(ctx, page, "START")
 }
 
@@ -111,7 +117,7 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		result.Status = StatusWarning
 	}
 	c.Record(result)
-	success++
+	c.succes.Add(1)
 	if !strings.HasPrefix(page, c.BaseURL.String()) {
 		return // skip parsing offsite pages
 	}
@@ -133,8 +139,9 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 			return
 		}
 		link = c.BaseURL.ResolveReference(u).String()
-		if !visited[link] {
-			visited[link] = true
+
+		if !c.visited[link] {
+			c.visited[link] = true
 			c.Crawl(ctx, link, page)
 		}
 	}
@@ -144,14 +151,20 @@ func (c *Checker) Record(r Result) {
 	if r.Status != StatusOK || c.Verbose {
 		fmt.Fprintln(c.Output, r)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.results = append(c.results, r)
 }
 
 func (c *Checker) Results() []Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.results
 }
 
 func (c *Checker) BrokenLinks() []Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var broken []Result
 	for _, r := range c.results {
 		if r.Status != StatusOK {
@@ -236,10 +249,10 @@ func Main() int {
 		}
 	}
 	fmt.Printf("\nLinks: %d (%d OK, %d broken, %d warnings) [%s]\n",
-		len(visited)+1,
-		success,
+		len(c.visited)+1,
+		c.succes.Load(),
 		len(broken),
-		len(warning),
+		len(c.warning),
 		time.Since(start).Round(100*time.Millisecond),
 	)
 	return 0

@@ -2,7 +2,6 @@ package weaver_test
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +12,41 @@ import (
 	"golang.org/x/time/rate"
 )
 
+func TestCheckInvalidURL(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewTLSServer(
+		http.FileServer(http.Dir("testdata/crawl")),
+	)
+	defer ts.Close()
+
+	c := weaver.NewChecker()
+	c.HTTPClient = ts.Client()
+	c.Output = io.Discard
+	c.Check(context.Background(), "http:// /")
+
+	want := []weaver.Result{
+		{
+			Link:     "http:// /",
+			Status:   weaver.StatusError,
+			Message:  `parse "http:// /": invalid character " " in host name`,
+			Referrer: "START",
+		},
+	}
+
+	got := c.Results()
+	if !cmp.Equal(want, got) {
+		t.Error(cmp.Diff(want, got))
+	}
+}
+
 func TestCrawlReturnsExpectedResults(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewTLSServer(
 		http.FileServer(http.Dir("testdata/crawl")),
 	)
+	defer ts.Close()
+
 	c := weaver.NewChecker()
 	c.HTTPClient = ts.Client()
 	c.Output = io.Discard
@@ -47,10 +76,27 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 			Message:  "404 Not Found",
 			Referrer: ts.URL + "/",
 		},
+		{
+			Link:     ts.URL + "/invalid_links.html",
+			Status:   weaver.StatusOK,
+			Message:  "200 OK",
+			Referrer: ts.URL + "/",
+		},
+		{
+			Link:     "httq://invalid_scheme.html",
+			Status:   weaver.StatusError,
+			Message:  `Get "httq://invalid_scheme.html": unsupported protocol scheme "httq"`,
+			Referrer: ts.URL + "/invalid_links.html",
+		},
+		{
+			Link:     "http:// /",
+			Status:   weaver.StatusError,
+			Message:  `parse "http:// /": invalid character " " in host name`,
+			Referrer: ts.URL + "/invalid_links.html",
+		},
 	}
 	got := c.Results()
 	if !cmp.Equal(want, got) {
-		fmt.Println(got)
 		t.Error(cmp.Diff(want, got))
 	}
 }
