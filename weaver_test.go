@@ -13,11 +13,47 @@ import (
 	"golang.org/x/time/rate"
 )
 
+func TestCrawlDetectsInvalidLink(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewTLSServer(
+		http.FileServer(http.Dir("testdata/crawl")),
+	)
+	defer ts.Close()
+
+	c := weaver.NewChecker()
+	c.HTTPClient = ts.Client()
+	c.Output = io.Discard
+	c.Check(context.Background(), ts.URL+"/invalid_link.html")
+
+	want := []weaver.Result{
+		{
+			Link:     ts.URL + "/invalid_link.html/",
+			Status:   weaver.StatusOK,
+			Message:  "200 OK",
+			Referrer: "START",
+		},
+		{
+			Link:     "httq://invalid_link.html",
+			Status:   weaver.StatusError,
+			Message:  `Get "httq:/invalid_link.html": unsupported protocol scheme "httq"`,
+			Referrer: ts.URL + "/invalid_link.html/",
+		},
+	}
+
+	got := c.Results()
+	if !cmp.Equal(want, got) {
+		t.Error(cmp.Diff(want, got))
+	}
+}
+
 func TestCrawlReturnsExpectedResults(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewTLSServer(
 		http.FileServer(http.Dir("testdata/crawl")),
 	)
+	defer ts.Close()
+
 	c := weaver.NewChecker()
 	c.HTTPClient = ts.Client()
 	c.Output = io.Discard
