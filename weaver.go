@@ -2,6 +2,8 @@ package weaver
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -70,8 +72,13 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	c.limiter.Wait(ctx)
 	resp, err := c.HTTPClient.Get(page)
 	if err != nil {
+		status := StatusError
+		var e *tls.CertificateVerificationError
+		if errors.As(err, &e) {
+			status = StatusWarning
+		}
 		c.Record(Result{
-			Status:   StatusError,
+			Status:   status,
 			Message:  err.Error(),
 			Link:     page,
 			Referrer: referrer,

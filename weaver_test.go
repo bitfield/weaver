@@ -2,8 +2,8 @@ package weaver_test
 
 import (
 	"context"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,6 +18,7 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	ts := httptest.NewTLSServer(
 		http.FileServer(http.Dir("testdata/crawl")),
 	)
+	defer ts.Close()
 	c := weaver.NewChecker()
 	c.HTTPClient = ts.Client()
 	c.Output = io.Discard
@@ -50,7 +51,6 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	}
 	got := c.Results()
 	if !cmp.Equal(want, got) {
-		fmt.Println(got)
 		t.Error(cmp.Diff(want, got))
 	}
 }
@@ -64,5 +64,26 @@ func TestReduceRateLimit_SetsCorrectLimit(t *testing.T) {
 	got := c.RateLimit()
 	if want != got {
 		t.Errorf("want %.2f, got %.2f", want, got)
+	}
+}
+
+func TestFailureToVerifyTLSIsRecordedAsWarning(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewTLSServer(nil)
+	defer ts.Close()
+	ts.Config.ErrorLog = log.New(io.Discard, "", 0)
+	c := weaver.NewChecker()
+	c.Output = io.Discard
+	c.Check(context.Background(), ts.URL)
+	got := c.Results()
+	if len(got) != 1 {
+		t.Fatalf("unexpected result set %v", got)
+	}
+	res := got[0]
+	if res.Link != ts.URL+"/" {
+		t.Errorf("want URL %q, got %q", ts.URL+"/", res.Link)
+	}
+	if res.Status != weaver.StatusWarning {
+		t.Errorf("want status %q, got %q", weaver.StatusWarning, res.Status)
 	}
 }
