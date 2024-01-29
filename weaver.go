@@ -23,7 +23,6 @@ const maxRate rate.Limit = 5
 
 var (
 	start            = time.Now()
-	visited          = map[string]bool{}
 	warning          []Result
 	success          int
 	lastRateLimitSet time.Time
@@ -36,6 +35,7 @@ type Checker struct {
 	HTTPClient *http.Client
 	results    []Result
 	limiter    *rate.Limiter
+	visited    map[string]bool
 }
 
 func NewChecker() *Checker {
@@ -46,6 +46,7 @@ func NewChecker() *Checker {
 			Timeout: 5 * time.Second,
 		},
 		limiter: rate.NewLimiter(maxRate, 1),
+		visited: map[string]bool{},
 	}
 }
 
@@ -64,7 +65,7 @@ func (c *Checker) Check(ctx context.Context, page string) {
 	if !strings.HasSuffix(page, "/") {
 		page += "/"
 	}
-	visited[page] = true
+	c.visited[page] = true
 	c.Crawl(ctx, page, "START")
 }
 
@@ -143,8 +144,8 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 			continue
 		}
 		link = c.BaseURL.ResolveReference(u).String()
-		if !visited[link] {
-			visited[link] = true
+		if !c.visited[link] {
+			c.visited[link] = true
 			c.Crawl(ctx, link, page)
 		}
 	}
@@ -255,7 +256,7 @@ func Main() int {
 		}
 	}
 	fmt.Printf("\nLinks: %d (%d OK, %d broken, %d warnings) [%s]\n",
-		len(visited)+1,
+		len(c.visited)+1,
 		success,
 		len(broken),
 		len(warning),
