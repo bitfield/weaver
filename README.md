@@ -23,7 +23,7 @@ To run it:
 weaver https://example.com
 ```
 ```
-Links: 2 (2 OK, 0 broken, 0 warnings) [1s]
+Links: 2 (2 OK, 0 errors, 0 warnings) [1s]
 ```
 
 ## Verbose mode
