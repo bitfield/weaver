@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,19 +22,15 @@ import (
 
 const maxRate rate.Limit = 5
 
-var (
-	start            = time.Now()
-	lastRateLimitSet time.Time
-)
-
 type Checker struct {
-	Verbose    bool
-	Output     io.Writer
-	BaseURL    *url.URL
-	HTTPClient *http.Client
-	results    []Result
-	limiter    *rate.Limiter
-	visited    map[string]bool
+	Verbose          bool
+	Output           io.Writer
+	BaseURL          *url.URL
+	HTTPClient       *http.Client
+	results          []Result
+	limiter          *rate.Limiter
+	lastRateLimitSet time.Time
+	visited          map[string]bool
 }
 
 func NewChecker() *Checker {
@@ -43,20 +40,16 @@ func NewChecker() *Checker {
 		HTTPClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
-		limiter: rate.NewLimiter(maxRate, 1),
-		visited: map[string]bool{},
+		limiter:          rate.NewLimiter(maxRate, 1),
+		lastRateLimitSet: time.Now(),
+		visited:          map[string]bool{},
 	}
 }
 
 func (c *Checker) Check(ctx context.Context, page string) {
 	base, err := url.Parse(page)
 	if err != nil {
-		c.Record(Result{
-			Status:   StatusError,
-			Message:  err.Error(),
-			Link:     page,
-			Referrer: "START",
-		})
+		c.RecordResult(page, "START", err, nil)
 		return
 	}
 	c.BaseURL = base
@@ -71,52 +64,29 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	c.limiter.Wait(ctx)
 	resp, err := c.HTTPClient.Get(page)
 	if err != nil {
-		status := StatusError
-		var e *tls.CertificateVerificationError
-		if errors.As(err, &e) {
-			status = StatusWarning
-		}
-		c.Record(Result{
-			Status:   status,
-			Message:  err.Error(),
-			Link:     page,
-			Referrer: referrer,
-		})
+		c.RecordResult(page, referrer, err, resp)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		c.ReduceRateLimit()
-		lastRateLimitSet = time.Now()
+		c.lastRateLimitSet = time.Now()
 		c.Crawl(ctx, page, referrer)
 		return
 	}
 	curLimit := c.limiter.Limit()
-	if curLimit < maxRate && time.Since(lastRateLimitSet) > 10*time.Second {
+	if curLimit < maxRate && time.Since(c.lastRateLimitSet) > 10*time.Second {
 		curLimit *= 1.5
 		if curLimit > maxRate {
 			curLimit = maxRate
 		}
 		c.limiter.SetLimit(curLimit)
-		lastRateLimitSet = time.Now()
+		c.lastRateLimitSet = time.Now()
 		if c.Verbose {
 			fmt.Fprintf(c.Output, "[INFO] increasing rate limit to %.2fr/s\n", curLimit)
 		}
 	}
-	result := Result{
-		Message:  resp.Status,
-		Link:     page,
-		Referrer: referrer,
-	}
-	switch resp.StatusCode {
-	case http.StatusOK:
-		result.Status = StatusOK
-	case http.StatusNotFound:
-		result.Status = StatusError
-	default:
-		result.Status = StatusWarning
-	}
-	c.Record(result)
+	c.RecordResult(page, referrer, err, resp)
 	if !strings.HasPrefix(page, c.BaseURL.String()) {
 		return // skip parsing offsite pages
 	}
@@ -129,12 +99,7 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		link := htmlquery.SelectAttr(anchor, "href")
 		u, err := url.Parse(link)
 		if err != nil {
-			c.Record(Result{
-				Status:   StatusError,
-				Message:  err.Error(),
-				Link:     link,
-				Referrer: page,
-			})
+			c.RecordResult(link, page, err, nil)
 			return
 		}
 		if !crawlable(u) {
@@ -148,11 +113,59 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	}
 }
 
-func (c *Checker) Record(r Result) {
-	if r.Status != StatusOK || c.Verbose {
-		fmt.Fprintln(c.Output, r)
+func (c *Checker) RecordResult(page, referrer string, err error, resp *http.Response) {
+	res := Result{
+		Status:   StatusError,
+		Link:     page,
+		Referrer: referrer,
 	}
-	c.results = append(c.results, r)
+	if err != nil {
+		res.Message = err.Error()
+		var e *tls.CertificateVerificationError
+		if errors.As(err, &e) {
+			res.Status = StatusWarning
+		}
+		c.results = append(c.results, res)
+		return
+	}
+	res.Message = resp.Status
+	u, err := url.Parse(page)
+	if err != nil {
+		panic(err)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		res.Status = StatusOK
+	case http.StatusNotFound, http.StatusNotAcceptable, http.StatusGone:
+		res.Status = StatusError
+	case http.StatusUnauthorized:
+		if u.Host == "www.reuters.com" {
+			res.Status = StatusSkipped
+			res.Message = "This site always returns 'unauthorized' to bots"
+		}
+	case http.StatusBadRequest:
+		if u.Host == "twitter.com" {
+			res.Status = StatusSkipped
+			res.Message = "This site always returns 'bad request' to bots"
+		}
+	case http.StatusForbidden:
+		if slices.Contains(forbidders, u.Host) {
+			res.Status = StatusSkipped
+			res.Message = "This site always returns 'forbidden' to bots"
+		}
+	case 999:
+		if u.Host == "www.linkedin.com" {
+			res.Status = StatusSkipped
+			res.Message = "This site always returns code 999 to bots"
+		}
+	default:
+		res.Status = StatusWarning
+	}
+	if res.Status == StatusError || res.Status == StatusWarning || c.Verbose {
+		fmt.Fprintln(c.Output, res)
+	}
+	c.results = append(c.results, res)
 }
 
 func (c *Checker) Results() []Result {
@@ -205,7 +218,7 @@ type Status string
 func (s Status) String() string {
 	msg := string(s)
 	switch s {
-	case StatusOK:
+	case StatusOK, StatusSkipped:
 		return color.GreenString(msg)
 	case StatusWarning:
 		return color.YellowString(msg)
@@ -220,6 +233,7 @@ const (
 	StatusOK      Status = "OKAY"
 	StatusWarning Status = "WARN"
 	StatusError   Status = "DEAD"
+	StatusSkipped Status = "SKIP"
 )
 
 func Main() int {
@@ -230,18 +244,18 @@ func Main() int {
 	defer cancel()
 	c := NewChecker()
 	c.Verbose = *verbose
+	start := time.Now()
 	go func() {
 		c.Check(ctx, site)
 		cancel()
 	}()
 	<-ctx.Done()
-	broken := c.Results()
+	results := c.Results()
 	ok, errors, warnings := 0, 0, 0
-	if len(broken) > 0 {
-		fmt.Println("\nBroken links:")
-		for _, link := range broken {
+	if len(results) > 0 {
+		for _, link := range results {
 			switch link.Status {
-			case StatusOK:
+			case StatusOK, StatusSkipped:
 				ok++
 			case StatusError:
 				fmt.Println(link)
