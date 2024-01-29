@@ -23,8 +23,6 @@ const maxRate rate.Limit = 5
 
 var (
 	start            = time.Now()
-	warning          []Result
-	success          int
 	lastRateLimitSet time.Time
 )
 
@@ -119,7 +117,6 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 		result.Status = StatusWarning
 	}
 	c.Record(result)
-	success++
 	if !strings.HasPrefix(page, c.BaseURL.String()) {
 		return // skip parsing offsite pages
 	}
@@ -160,16 +157,6 @@ func (c *Checker) Record(r Result) {
 
 func (c *Checker) Results() []Result {
 	return c.results
-}
-
-func (c *Checker) BrokenLinks() []Result {
-	var broken []Result
-	for _, r := range c.results {
-		if r.Status != StatusOK {
-			broken = append(broken, r)
-		}
-	}
-	return broken
 }
 
 func (c *Checker) SetRateLimit(limit rate.Limit) {
@@ -248,18 +235,27 @@ func Main() int {
 		cancel()
 	}()
 	<-ctx.Done()
-	broken := c.BrokenLinks()
+	broken := c.Results()
+	ok, errors, warnings := 0, 0, 0
 	if len(broken) > 0 {
 		fmt.Println("\nBroken links:")
 		for _, link := range broken {
-			fmt.Println(link)
+			switch link.Status {
+			case StatusOK:
+				ok++
+			case StatusError:
+				fmt.Println(link)
+				errors++
+			case StatusWarning:
+				fmt.Println(link)
+				warnings++
+			}
 		}
 	}
-	fmt.Printf("\nLinks: %d (%d OK, %d broken, %d warnings) [%s]\n",
-		len(c.visited)+1,
-		success,
-		len(broken),
-		len(warning),
+	fmt.Printf("\nLinks: %d (%d OK, %d errors, %d warnings) [%s]\n",
+		ok,
+		ok-errors-warnings,
+		errors, warnings,
 		time.Since(start).Round(100*time.Millisecond),
 	)
 	return 0
