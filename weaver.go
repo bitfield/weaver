@@ -132,6 +132,9 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 			})
 			return
 		}
+		if !crawlable(u) {
+			continue
+		}
 		link = c.BaseURL.ResolveReference(u).String()
 		if !visited[link] {
 			visited[link] = true
@@ -174,6 +177,15 @@ func (c *Checker) ReduceRateLimit() {
 	c.SetRateLimit(curLimit / 2)
 	if c.Verbose {
 		fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", c.limiter.Limit())
+	}
+}
+
+func crawlable(u *url.URL) bool {
+	switch u.Scheme {
+	case "mailto":
+		return false
+	default:
+		return true
 	}
 }
 
