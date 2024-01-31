@@ -48,6 +48,24 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 			Message:  "404 Not Found",
 			Referrer: ts.URL + "/",
 		},
+		{
+			Link:     ts.URL + "/invalid_links.html",
+			Status:   weaver.StatusOK,
+			Message:  "200 OK",
+			Referrer: ts.URL + "/",
+		},
+		{
+			Link:     "httq://invalid_scheme.html",
+			Status:   weaver.StatusError,
+			Message:  `Get "httq://invalid_scheme.html": unsupported protocol scheme "httq"`,
+			Referrer: ts.URL + "/invalid_links.html",
+		},
+		{
+			Link:     "http:// /",
+			Status:   weaver.StatusError,
+			Message:  `parse "http:// /": invalid character " " in host name`,
+			Referrer: ts.URL + "/invalid_links.html",
+		},
 	}
 	got := c.Results()
 	if !cmp.Equal(want, got) {
