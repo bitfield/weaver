@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"slices"
 	"strings"
 	"time"
 
@@ -20,7 +19,10 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const maxRate rate.Limit = 5
+const (
+	maxRate       rate.Limit = 5
+	fakeUserAgent            = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
 
 type Checker struct {
 	Verbose          bool
@@ -62,7 +64,13 @@ func (c *Checker) Check(ctx context.Context, page string) {
 
 func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 	c.limiter.Wait(ctx)
-	resp, err := c.HTTPClient.Get(page)
+	req, err := http.NewRequest("GET", page, nil)
+	if err != nil {
+		c.RecordResult(page, referrer, err, nil)
+		return
+	}
+	req.Header.Set("User-Agent", fakeUserAgent)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		c.RecordResult(page, referrer, err, resp)
 		return
@@ -102,7 +110,7 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 			c.RecordResult(link, page, err, nil)
 			return
 		}
-		if !crawlable(u) {
+		if u.Scheme == "mailto" {
 			continue
 		}
 		link = c.BaseURL.ResolveReference(u).String()
@@ -129,36 +137,16 @@ func (c *Checker) RecordResult(page, referrer string, err error, resp *http.Resp
 		return
 	}
 	res.Message = resp.Status
-	u, err := url.Parse(page)
-	if err != nil {
-		panic(err)
-	}
-
 	switch resp.StatusCode {
 	case http.StatusOK:
 		res.Status = StatusOK
-	case http.StatusNotFound, http.StatusNotAcceptable, http.StatusGone:
+	case http.StatusNotFound,
+		http.StatusNotAcceptable,
+		http.StatusGone,
+		http.StatusUnauthorized,
+		http.StatusBadRequest,
+		http.StatusForbidden:
 		res.Status = StatusError
-	case http.StatusUnauthorized:
-		if u.Host == "www.reuters.com" {
-			res.Status = StatusSkipped
-			res.Message = "This site always returns 'unauthorized' to bots"
-		}
-	case http.StatusBadRequest:
-		if u.Host == "twitter.com" {
-			res.Status = StatusSkipped
-			res.Message = "This site always returns 'bad request' to bots"
-		}
-	case http.StatusForbidden:
-		if slices.Contains(forbidders, u.Host) {
-			res.Status = StatusSkipped
-			res.Message = "This site always returns 'forbidden' to bots"
-		}
-	case 999:
-		if u.Host == "www.linkedin.com" {
-			res.Status = StatusSkipped
-			res.Message = "This site always returns code 999 to bots"
-		}
 	default:
 		res.Status = StatusWarning
 	}
@@ -185,15 +173,6 @@ func (c *Checker) ReduceRateLimit() {
 	c.SetRateLimit(curLimit / 2)
 	if c.Verbose {
 		fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", c.limiter.Limit())
-	}
-}
-
-func crawlable(u *url.URL) bool {
-	switch u.Scheme {
-	case "mailto":
-		return false
-	default:
-		return true
 	}
 }
 
