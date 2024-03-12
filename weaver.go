@@ -133,6 +133,7 @@ func (c *Checker) RecordResult(page, referrer string, err error, resp *http.Resp
 		if errors.As(err, &e) {
 			res.Status = StatusWarning
 		}
+		fmt.Fprintln(c.Output, res)
 		c.results = append(c.results, res)
 		return
 	}
@@ -215,9 +216,19 @@ const (
 	StatusSkipped Status = "SKIP"
 )
 
+var usage = `Usage: weaver [-v] URL
+
+Checks the website at URL, following all links and reporting any broken links or errors.
+
+In verbose mode (-v), reports all links found.`
+
 func Main() int {
 	verbose := flag.Bool("v", false, "verbose output")
 	flag.Parse()
+	if len(flag.Args()) == 0 {
+		fmt.Println(usage)
+		return 0
+	}
 	site := flag.Args()[0]
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
