@@ -237,18 +237,14 @@ func Main() int {
 			case StatusOK, StatusSkipped:
 				ok++
 			case StatusError:
-				fmt.Println(link)
 				errors++
 			case StatusWarning:
-				fmt.Println(link)
 				warnings++
 			}
 		}
 	}
 	fmt.Printf("\nLinks: %d (%d OK, %d errors, %d warnings) [%s]\n",
-		ok,
-		ok-errors-warnings,
-		errors, warnings,
+		len(results), ok, errors, warnings,
 		time.Since(start).Round(100*time.Millisecond),
 	)
 	return 0
