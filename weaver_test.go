@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	"github.com/bitfield/weaver"
 	"github.com/google/go-cmp/cmp"
@@ -16,12 +17,13 @@ import (
 func TestCrawlReturnsExpectedResults(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewTLSServer(
-		http.FileServer(http.Dir("testdata/crawl")),
+		http.FileServerFS(testFS),
 	)
 	defer ts.Close()
 	c := weaver.NewChecker()
 	c.HTTPClient = ts.Client()
 	c.Output = io.Discard
+	c.SetRateLimit(rate.Inf)
 	c.Check(context.Background(), ts.URL)
 	want := []weaver.Result{
 		{
@@ -85,7 +87,7 @@ func TestReduceRateLimit_SetsCorrectLimit(t *testing.T) {
 	}
 }
 
-func TestFailureToVerifyTLSIsRecordedAsWarning(t *testing.T) {
+func TestCertVerifyFailuresAreRecordedAsWarnings(t *testing.T) {
 	t.Parallel()
 	ts := httptest.NewTLSServer(nil)
 	defer ts.Close()
@@ -104,4 +106,46 @@ func TestFailureToVerifyTLSIsRecordedAsWarning(t *testing.T) {
 	if res.Status != weaver.StatusWarning {
 		t.Errorf("want status %q, got %q", weaver.StatusWarning, res.Status)
 	}
+}
+
+var testFS = fstest.MapFS{
+	"go_sucks.html": {
+		Data: []byte(`<html><head><title>Why Go Sucks</title></head>
+	<body>
+	  Something something error handling (source: <a href="/bogus">Hacker News</a>)
+	
+	  <a href="/">Index</a>
+	</body>
+	</html>`),
+	},
+	"index.html": {
+		Data: []byte(`<html><head><title>Start page</title></head>
+	<body>
+	  My latest interesting opinions:
+	
+	  <ul>
+	    <li><a href="go_sucks.html">Why Go Sucks</a></li>
+	    <li><a href="rust_rules.html">Why Rust Rules</a></li>
+	    <li><a href="invalid_links.html">Invalid Links</a></li>
+	  </ul>
+	
+	<a href="mailto:john@example.com">Contact me</a>
+	
+	</body>
+	</html>
+	`),
+	},
+	"invalid_links.html": {
+		Data: []byte(`<html><head><title>Invalid links</title></head>
+	<body>
+	    My latest interesting opinions:
+    
+	    <ul>
+		<li><a href="httq://invalid_scheme.html">Invalid scheme example</a></li>
+		<li><a href="http:// /">Invalid path</a></li>
+	    </ul>
+	</body>
+    </html>
+    `),
+	},
 }
