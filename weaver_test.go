@@ -27,34 +27,40 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	c.Check(context.Background(), ts.URL)
 	want := []weaver.Result{
 		{
-			Link:     ts.URL + "/",
+			Link:     ts.URL,
 			Status:   weaver.StatusOK,
 			Message:  "200 OK",
 			Referrer: "START",
 		},
 		{
-			Link:     ts.URL + "/go_sucks.html",
+			Link:     ts.URL + "/go/sucks.html",
 			Status:   weaver.StatusOK,
 			Message:  "200 OK",
-			Referrer: ts.URL + "/",
+			Referrer: ts.URL,
 		},
 		{
 			Link:     ts.URL + "/bogus",
 			Status:   weaver.StatusError,
 			Message:  "404 Not Found",
-			Referrer: ts.URL + "/go_sucks.html",
+			Referrer: ts.URL + "/go/sucks.html",
+		},
+		{
+			Link:     ts.URL + "/go/post.html",
+			Status:   weaver.StatusOK,
+			Message:  "200 OK",
+			Referrer: ts.URL + "/go/sucks.html",
 		},
 		{
 			Link:     ts.URL + "/rust_rules.html",
 			Status:   weaver.StatusError,
 			Message:  "404 Not Found",
-			Referrer: ts.URL + "/",
+			Referrer: ts.URL,
 		},
 		{
 			Link:     ts.URL + "/invalid_links.html",
 			Status:   weaver.StatusOK,
 			Message:  "200 OK",
-			Referrer: ts.URL + "/",
+			Referrer: ts.URL,
 		},
 		{
 			Link:     "httq://invalid_scheme.html",
@@ -100,8 +106,8 @@ func TestCertVerifyFailuresAreRecordedAsWarnings(t *testing.T) {
 		t.Fatalf("unexpected result set %v", got)
 	}
 	res := got[0]
-	if res.Link != ts.URL+"/" {
-		t.Errorf("want URL %q, got %q", ts.URL+"/", res.Link)
+	if res.Link != ts.URL {
+		t.Errorf("want URL %q, got %q", ts.URL, res.Link)
 	}
 	if res.Status != weaver.StatusWarning {
 		t.Errorf("want status %q, got %q", weaver.StatusWarning, res.Status)
@@ -109,22 +115,24 @@ func TestCertVerifyFailuresAreRecordedAsWarnings(t *testing.T) {
 }
 
 var testFS = fstest.MapFS{
-	"go_sucks.html": {
+	"go/sucks.html": {
 		Data: []byte(`<html><head><title>Why Go Sucks</title></head>
 	<body>
 	  Something something error handling (source: <a href="/bogus">Hacker News</a>)
 	
 	  <a href="/">Index</a>
+	  <a href="post.html">Post in same subfolder</a>
 	</body>
 	</html>`),
 	},
+	"go/post.html": {},
 	"index.html": {
 		Data: []byte(`<html><head><title>Start page</title></head>
 	<body>
 	  My latest interesting opinions:
 	
 	  <ul>
-	    <li><a href="go_sucks.html">Why Go Sucks</a></li>
+	    <li><a href="go/sucks.html">Why Go Sucks</a></li>
 	    <li><a href="rust_rules.html">Why Rust Rules</a></li>
 	    <li><a href="invalid_links.html">Invalid Links</a></li>
 	  </ul>

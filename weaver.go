@@ -48,31 +48,31 @@ func NewChecker() *Checker {
 	}
 }
 
-func (c *Checker) Check(ctx context.Context, page string) {
-	base, err := url.Parse(page)
+func (c *Checker) Check(ctx context.Context, site string) {
+	base, err := url.Parse(site)
 	if err != nil {
-		c.RecordResult(page, "START", err, nil)
+		c.RecordResult(site, "START", err, nil)
 		return
 	}
 	c.BaseURL = base
-	if !strings.HasSuffix(page, "/") {
-		page += "/"
+	if !strings.HasSuffix(site, "/") {
+		site += "/"
 	}
-	c.visited[page] = true
-	c.Crawl(ctx, page, "START")
+	c.visited[site] = true
+	c.Crawl(ctx, base, "START")
 }
 
-func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
+func (c *Checker) Crawl(ctx context.Context, page *url.URL, referrer string) {
 	c.limiter.Wait(ctx)
-	req, err := http.NewRequest("GET", page, nil)
+	req, err := http.NewRequest("GET", page.String(), nil)
 	if err != nil {
-		c.RecordResult(page, referrer, err, nil)
+		c.RecordResult(page.String(), referrer, err, nil)
 		return
 	}
 	req.Header.Set("User-Agent", fakeUserAgent)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		c.RecordResult(page, referrer, err, resp)
+		c.RecordResult(page.String(), referrer, err, resp)
 		return
 	}
 	defer resp.Body.Close()
@@ -94,37 +94,37 @@ func (c *Checker) Crawl(ctx context.Context, page, referrer string) {
 			fmt.Fprintf(c.Output, "[INFO] increasing rate limit to %.2fr/s\n", curLimit)
 		}
 	}
-	c.RecordResult(page, referrer, err, resp)
-	if !strings.HasPrefix(page, c.BaseURL.String()) {
+	c.RecordResult(page.String(), referrer, err, resp)
+	if page.Host != c.BaseURL.Host {
 		return // skip parsing offsite pages
 	}
 	doc, err := htmlquery.Parse(resp.Body)
 	if err != nil {
-		fmt.Fprintf(c.Output, "[%s] %s: %s (referrer: %s)\n", color.RedString("ERR"), page, err, referrer)
+		return // skip invalid HTML
 	}
 	list := htmlquery.Find(doc, "//a/@href")
 	for _, anchor := range list {
 		link := htmlquery.SelectAttr(anchor, "href")
 		u, err := url.Parse(link)
 		if err != nil {
-			c.RecordResult(link, page, err, nil)
+			c.RecordResult(link, page.String(), err, nil)
 			return
 		}
 		if u.Scheme == "mailto" {
 			continue
 		}
-		link = c.BaseURL.ResolveReference(u).String()
-		if !c.visited[link] {
-			c.visited[link] = true
-			c.Crawl(ctx, link, page)
+		target := page.ResolveReference(u)
+		if !c.visited[target.String()] {
+			c.visited[target.String()] = true
+			c.Crawl(ctx, target, page.String())
 		}
 	}
 }
 
-func (c *Checker) RecordResult(page, referrer string, err error, resp *http.Response) {
+func (c *Checker) RecordResult(link, referrer string, err error, resp *http.Response) {
 	res := Result{
 		Status:   StatusError,
-		Link:     page,
+		Link:     link,
 		Referrer: referrer,
 	}
 	if err != nil {
@@ -185,10 +185,10 @@ type Result struct {
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("[%s] (%s) %s (referrer: %s)",
+	return fmt.Sprintf("[%s] %s (%s) (referrer: %s)",
 		r.Status,
-		r.Message,
 		r.Link,
+		r.Message,
 		r.Referrer,
 	)
 }
