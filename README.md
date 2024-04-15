@@ -34,10 +34,10 @@ To see more information about what's going on, use the `-v` flag:
 weaver -v https://example.com
 ```
 ```
-[OKAY] (200 OK) https://example.com/ (referrer: START)
-[OKAY] (200 OK) https://www.iana.org/domains/example (referrer: https://example.com/)
+[OKAY] https://example.com (200 OK) (referrer: START)
+[OKAY] https://www.iana.org/domains/example (200 OK) (referrer: https://example.com)
 
-Links: 2 (2 OK, 0 broken, 0 warnings) [900ms]
+Links: 2 (2 OK, 0 errors, 0 warnings) [800ms]
 ```
 
 ## How it works
@@ -49,7 +49,7 @@ If the link points to the same domain as the original URL, it is also parsed for
 Any broken links will be reported, together with the referring page:
 
 ```
-[DEAD] (404 Not Found) https://example.com/bogus (referrer: https://example.com/)
+[DEAD] https://example.com/bogus (404 Not Found) (referrer: https://example.com/)
 ```
 
 ## Rate limiting
