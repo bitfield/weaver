@@ -25,14 +25,13 @@ const (
 )
 
 type Checker struct {
-	Verbose          bool
-	Output           io.Writer
-	BaseURL          *url.URL
-	HTTPClient       *http.Client
-	results          []Result
-	limiter          *rate.Limiter
-	lastRateLimitSet time.Time
-	visited          map[string]bool
+	Verbose    bool
+	Output     io.Writer
+	BaseURL    *url.URL
+	HTTPClient *http.Client
+	Limiter    *AdaptiveRateLimiter
+	results    []Result
+	visited    map[string]bool
 }
 
 func NewChecker() *Checker {
@@ -42,9 +41,8 @@ func NewChecker() *Checker {
 		HTTPClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
-		limiter:          rate.NewLimiter(maxRate, 1),
-		lastRateLimitSet: time.Now(),
-		visited:          map[string]bool{},
+		Limiter: NewAdaptiveRateLimiter(),
+		visited: map[string]bool{},
 	}
 }
 
@@ -63,7 +61,7 @@ func (c *Checker) Check(ctx context.Context, site string) {
 }
 
 func (c *Checker) Crawl(ctx context.Context, page *url.URL, referrer string) {
-	c.limiter.Wait(ctx)
+	c.Limiter.Wait(ctx)
 	req, err := http.NewRequest("GET", page.String(), nil)
 	if err != nil {
 		c.RecordResult(page.String(), referrer, err, nil)
@@ -77,22 +75,15 @@ func (c *Checker) Crawl(ctx context.Context, page *url.URL, referrer string) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		c.ReduceRateLimit()
-		c.lastRateLimitSet = time.Now()
+		c.Limiter.ReduceLimit()
+		if c.Verbose {
+			fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", c.Limiter.Limit())
+		}
 		c.Crawl(ctx, page, referrer)
 		return
 	}
-	curLimit := c.limiter.Limit()
-	if curLimit < maxRate && time.Since(c.lastRateLimitSet) > 10*time.Second {
-		curLimit *= 1.5
-		if curLimit > maxRate {
-			curLimit = maxRate
-		}
-		c.limiter.SetLimit(curLimit)
-		c.lastRateLimitSet = time.Now()
-		if c.Verbose {
-			fmt.Fprintf(c.Output, "[INFO] increasing rate limit to %.2fr/s\n", curLimit)
-		}
+	if c.Limiter.GraduallyIncreaseRateLimit() && c.Verbose {
+		fmt.Fprintf(c.Output, "[INFO] increasing rate limit to %.2fr/s\n", c.Limiter.Limit())
 	}
 	c.RecordResult(page.String(), referrer, err, resp)
 	if page.Host != c.BaseURL.Host {
@@ -159,22 +150,6 @@ func (c *Checker) RecordResult(link, referrer string, err error, resp *http.Resp
 
 func (c *Checker) Results() []Result {
 	return c.results
-}
-
-func (c *Checker) SetRateLimit(limit rate.Limit) {
-	c.limiter.SetLimit(limit)
-}
-
-func (c *Checker) RateLimit() rate.Limit {
-	return c.limiter.Limit()
-}
-
-func (c *Checker) ReduceRateLimit() {
-	curLimit := c.RateLimit()
-	c.SetRateLimit(curLimit / 2)
-	if c.Verbose {
-		fmt.Fprintf(c.Output, "[INFO] reducing rate limit to %.2fr/s\n", c.limiter.Limit())
-	}
 }
 
 type Result struct {
@@ -259,4 +234,51 @@ func Main() int {
 		time.Since(start).Round(100*time.Millisecond),
 	)
 	return 0
+}
+
+type AdaptiveRateLimiter struct {
+	limiter          *rate.Limiter
+	limitLastUpdated time.Time
+}
+
+func NewAdaptiveRateLimiter() *AdaptiveRateLimiter {
+	return &AdaptiveRateLimiter{
+		limiter:          rate.NewLimiter(maxRate, 1),
+		limitLastUpdated: time.Now(),
+	}
+}
+
+func (a *AdaptiveRateLimiter) Wait(ctx context.Context) {
+	a.limiter.Wait(ctx)
+}
+
+func (a *AdaptiveRateLimiter) GraduallyIncreaseRateLimit() (increased bool) {
+	curLimit := a.limiter.Limit()
+	if curLimit >= maxRate {
+		return false
+	}
+	if time.Since(a.limitLastUpdated) <= 10*time.Second {
+		return false
+	}
+	curLimit *= 1.5
+	if curLimit > maxRate {
+		curLimit = maxRate
+	}
+	a.limiter.SetLimit(curLimit)
+	a.limitLastUpdated = time.Now()
+	return true
+}
+
+func (a *AdaptiveRateLimiter) ReduceLimit() {
+	curLimit := a.limiter.Limit()
+	a.limiter.SetLimit(curLimit / 2)
+	a.limitLastUpdated = time.Now()
+}
+
+func (a AdaptiveRateLimiter) Limit() rate.Limit {
+	return a.limiter.Limit()
+}
+
+func (a AdaptiveRateLimiter) SetLimit(r rate.Limit) {
+	a.limiter.SetLimit(r)
 }

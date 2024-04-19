@@ -23,7 +23,7 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	c := weaver.NewChecker()
 	c.HTTPClient = ts.Client()
 	c.Output = io.Discard
-	c.SetRateLimit(rate.Inf)
+	c.Limiter.SetLimit(rate.Inf)
 	c.Check(context.Background(), ts.URL)
 	want := []weaver.Result{
 		{
@@ -81,13 +81,13 @@ func TestCrawlReturnsExpectedResults(t *testing.T) {
 	}
 }
 
-func TestReduceRateLimit_SetsCorrectLimit(t *testing.T) {
+func TestReduceLimit_SetsCorrectLimit(t *testing.T) {
 	t.Parallel()
-	c := weaver.NewChecker()
-	c.SetRateLimit(4)
-	c.ReduceRateLimit()
+	a := weaver.NewAdaptiveRateLimiter()
+	a.SetLimit(4)
+	a.ReduceLimit()
 	want := rate.Limit(2)
-	got := c.RateLimit()
+	got := a.Limit()
 	if want != got {
 		t.Errorf("want %.2f, got %.2f", want, got)
 	}
