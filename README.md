@@ -1,5 +1,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/bitfield/weaver.svg)](https://pkg.go.dev/github.com/bitfield/weaver)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bitfield/weaver)](https://goreportcard.com/report/github.com/bitfield/weaver)
+![CI](https://github.com/bitfield/weaver/actions/workflows/ci.yml/badge.svg)
+![Audit](https://github.com/bitfield/weaver/actions/workflows/audit.yml/badge.svg)
 
 # Weaver
 
