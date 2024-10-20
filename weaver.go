@@ -160,7 +160,7 @@ type Result struct {
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("[%s] %s (%s) (referrer: %s)",
+	return fmt.Sprintf("[%s] %s (%s) — referrer: %s",
 		r.Status,
 		r.Link,
 		r.Message,
