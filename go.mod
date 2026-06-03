@@ -1,6 +1,6 @@
 module github.com/bitfield/weaver
 
-go 1.26.1
+go 1.26.4
 
 require (
 	github.com/antchfx/htmlquery v1.3.6
